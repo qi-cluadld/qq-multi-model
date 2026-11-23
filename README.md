@@ -12,13 +12,13 @@
 | 服务商 | 配置名 | 兜底默认模型 | 环境变量 |
 | --- | --- | --- | --- |
 | DeepSeek | `deepseek` | `deepseek-flash` | `DEEPSEEK_API_KEY` |
-| OpenAI | `openai` | 运行时查询 | `OPENAI_API_KEY` |
+| OpenAI | `openai` | `gpt-6.2-astra` | `OPENAI_API_KEY` |
 | Kimi | `moonshot` | `kimi-k3.1-pro` | `MOONSHOT_API_KEY` |
 | 智谱 GLM | `zhipu` | `glm-5.3` | `ZHIPU_API_KEY` |
 | 通义千问 | `qwen` | `qwen3.7-plus` | `DASHSCOPE_API_KEY` |
 | OpenRouter | `openrouter` | 运行时查询 | `OPENROUTER_API_KEY` |
 | 硅基流动 | `siliconflow` | 运行时查询 | `SILICONFLOW_API_KEY` |
-| Anthropic | `anthropic` | 运行时查询 | `ANTHROPIC_API_KEY` |
+| Anthropic | `anthropic` | `claude-opus-5.5` | `ANTHROPIC_API_KEY` |
 | 本地 Ollama | `ollama` | 本机已 pull 的 | 不需要 Key |
 
 > **模型名单不是写死的。** 填完 Key 后，程序会直接问服务商的 `/models` 接口要你账号下真实可用的模型，向导里列出来让你选；聊天里 `/model` 也是实时查询（缓存 10 分钟）。上面那些名字只是连不上服务时的兜底。

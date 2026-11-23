@@ -57,9 +57,15 @@ PROVIDERS: dict[str, Provider] = {
         kind="openai",
         base_url="https://api.openai.com/v1",
         api_key_env="OPENAI_API_KEY",
-        # 模型迭代太快，这里不写死：运行时用 GET /models 拉你账号可用的列表
-        models=(),
-        default_model="",
+        # 兜底名单（2026-11 核对；账号的真实可用列表以 GET /models 为准）
+        models=(
+            "gpt-6.2-astra",
+            "gpt-6.2-astra-pro",
+            "gpt-6.2-sol",
+            "gpt-6.1-terra",
+            "gpt-6-luna",
+        ),
+        default_model="gpt-6.2-astra",
     ),
     "moonshot": Provider(
         name="moonshot",
@@ -126,9 +132,14 @@ PROVIDERS: dict[str, Provider] = {
         kind="anthropic",
         base_url="https://api.anthropic.com",
         api_key_env="ANTHROPIC_API_KEY",
-        # 运行时用 GET /v1/models 拉取
-        models=(),
-        default_model="",
+        # 兜底名单（2026-11 核对；账号的真实可用列表以 GET /v1/models 为准）
+        models=(
+            "claude-opus-5.5",
+            "claude-fable-5.2",
+            "claude-sonnet-5.5",
+            "claude-haiku-5.5",
+        ),
+        default_model="claude-opus-5.5",
     ),
 }
 

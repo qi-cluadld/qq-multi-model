@@ -8,6 +8,9 @@
 
 配置读取走 ``cfg.get("providers.<name>.api_key")`` 这样的点号路径，
 没配置时再退回环境变量；base_url 同理（先配置，后内置默认值）。
+
+内置模型清单只是推荐快照；``list_models()`` 会在运行时向服务商查询账号下
+真实可用的模型，并按 provider 缓存 10 分钟。
 """
 
 from __future__ import annotations
@@ -16,6 +19,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from typing import Any
 
 import aiohttp
@@ -48,6 +52,11 @@ _OPENAI_SUFFIX = "/chat/completions"
 _ANTHROPIC_SUFFIX = "/v1/messages"
 _ANTHROPIC_VERSION = "2023-06-01"
 
+# 运行时查询到的模型清单缓存 10 分钟；查询失败不缓存
+_MODELS_CACHE_TTL = 600.0
+_OPENAI_MODELS_SUFFIX = "/models"
+_ANTHROPIC_MODELS_SUFFIX = "/v1/models"
+
 
 class LLMClient:
     """一个可复用的多模型对话客户端。
@@ -69,6 +78,8 @@ class LLMClient:
         # 重试退避的基准秒数：1.5、3.0、6.0…（测试里会调小）
         self.retry_backoff = 1.5
         self._session: aiohttp.ClientSession | None = None
+        # 运行时查到的模型清单：provider.name -> (缓存时刻, 已排序的模型 id 列表)
+        self._models_cache: dict[str, tuple[float, list[str]]] = {}
 
     # ------------------------------------------------------------ 对外 API
 
@@ -125,6 +136,54 @@ class LLMClient:
             provider = get_provider("deepseek")
             model = provider.default_model
         return model_spec_for(provider.name, model)
+
+    async def list_models(self, provider_name: str | None = None) -> list[str]:
+        """返回该服务商账号下真实可用的模型 id 列表（不带 provider/ 前缀）。
+
+        ``provider_name`` 为 ``None`` 时用默认模型所属的 provider。
+        结果按 provider 缓存 10 分钟；失败（没 Key、HTTP 错误、网络/超时）
+        抛 :class:`LLMError`，由上层决定是否回退到内置清单。
+        这是查询接口，**不会重试**。
+        """
+        if provider_name is None or (
+            isinstance(provider_name, str) and not provider_name.strip()
+        ):
+            provider = self._resolve_model(None)[0]
+        else:
+            try:
+                provider = get_provider(provider_name)
+            except ProviderError as exc:
+                raise LLMError(str(exc)) from None
+
+        cached = self._models_cache.get(provider.name)
+        if cached is not None and time.monotonic() - cached[0] < _MODELS_CACHE_TTL:
+            return list(cached[1])
+
+        api_key = self._api_key(provider)  # 缺 Key 时抛带展示名和 --setup 的 LLMError
+        base_url = self._base_url(provider)
+        if provider.kind == "anthropic":
+            url = _anthropic_models_url(base_url)
+            headers = {
+                "x-api-key": api_key,
+                "anthropic-version": _ANTHROPIC_VERSION,
+            }
+        else:
+            url = _join_url(base_url, _OPENAI_MODELS_SUFFIX)
+            headers = {}
+            if api_key:  # Ollama 之类本地服务不需要 Key
+                headers["Authorization"] = f"Bearer {api_key}"
+
+        models = await self._fetch_models(provider, url, headers)
+        self._models_cache[provider.name] = (time.monotonic(), models)
+        return list(models)
+
+    def invalidate_models(self, provider_name: str | None = None) -> None:
+        """清掉模型清单缓存；不传 ``provider_name`` 就全清。"""
+        if provider_name is None:
+            self._models_cache.clear()
+            return
+        key = provider_name.strip().lower() if isinstance(provider_name, str) else ""
+        self._models_cache.pop(key, None)
 
     # ------------------------------------------------------------ 配置读取
 
@@ -280,6 +339,49 @@ class LLMClient:
         self._session = session
         return session
 
+    async def _fetch_models(
+        self, provider: Provider, url: str, headers: dict[str, str]
+    ) -> list[str]:
+        """GET 一次模型清单；不重试，失败统一转成中文 LLMError。"""
+        try:
+            session = await self._get_session()
+            async with session.get(url, headers=headers) as resp:
+                text = await resp.text()
+                if resp.status != 200:
+                    reason = self._http_error(provider, resp.status, text)
+                    raise LLMError(
+                        f"查询 {provider.label} 模型列表失败"
+                        f"（HTTP {resp.status}）：{reason}"
+                    )
+                return self._extract_models(provider, self._loads(text))
+        except LLMError:
+            raise
+        except (asyncio.TimeoutError, aiohttp.ServerTimeoutError):
+            raise LLMError(
+                f"查询 {provider.label} 模型列表超时，检查网络或稍后再试"
+            ) from None
+        except aiohttp.ClientConnectorError:
+            raise LLMError(f"连不上 {provider.label}，检查网络或代理设置") from None
+        except aiohttp.ClientError as exc:
+            raise LLMError(
+                f"查询 {provider.label} 模型列表时网络异常（{exc.__class__.__name__}）"
+            ) from None
+
+    @staticmethod
+    def _extract_models(provider: Provider, payload: Any) -> list[str]:
+        """解析 OpenAI / Anthropic 风格的 ``{"data":[{"id": "..."}]}``。"""
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, list):
+            raise LLMError(f"{provider.label} 返回的模型列表格式不对（缺少 data 数组）")
+        model_ids = {
+            item["id"].strip()
+            for item in data
+            if isinstance(item, dict)
+            and isinstance(item.get("id"), str)
+            and item["id"].strip()
+        }
+        return sorted(model_ids)
+
     async def _post(
         self,
         provider: Provider,
@@ -428,6 +530,18 @@ def _join_url(base_url: str, suffix: str) -> str:
     if base.endswith(suffix):
         return base
     return base + suffix
+
+
+def _anthropic_models_url(base_url: str) -> str:
+    """Anthropic 的模型列表在 ``{base}/v1/models``，容忍 base 已带 /v1。"""
+    base = (base_url or "").strip().rstrip("/")
+    if not base:
+        return _ANTHROPIC_MODELS_SUFFIX
+    if base.endswith("/models"):
+        return base
+    if base.endswith("/v1"):
+        return base + "/models"
+    return base + _ANTHROPIC_MODELS_SUFFIX
 
 
 def _preview(messages: list[dict[str, str]], limit: int = 60) -> str:

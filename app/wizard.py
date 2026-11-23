@@ -1,4 +1,4 @@
-﻿"""首次运行向导：不用手改 YAML，问几个问题就把 config.yaml 写好。
+"""首次运行向导：不用手改 YAML，问几个问题就把 config.yaml 写好。
 
 设计原则：
 - 能按回车就用默认值，问题越少越好
@@ -140,15 +140,26 @@ def _free_port(preferred: int) -> int:
     return preferred
 
 
-def _validate_provider(provider, api_key: str, base_url: str = "", timeout: float = 15) -> tuple[bool, str]:
-    """用各家的 /models 接口验证密钥；不支持的服务商直接跳过。"""
-    if provider.kind != "openai":
-        return True, "跳过（该服务商暂不支持自动校验）"
+def _probe_provider(provider, api_key: str, base_url: str = "",
+                    timeout: float = 15) -> tuple[bool, str, list[str]]:
+    """连一下服务商的 /models：既验证 Key，又拿回账号下真实可用的模型。
+
+    返回 ``(是否成功, 说明, 模型 id 列表)``。失败时列表为空，调用方回退到内置清单。
+    """
+    import json
+
     base = (base_url or provider.base_url).rstrip("/")
-    url = base + "/models"
-    headers = {"User-Agent": "qq-multi-model"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
+    if provider.kind == "anthropic":
+        url = base + "/v1/models"
+        headers = {"anthropic-version": "2023-06-01", "User-Agent": "qq-multi-model"}
+        if api_key:
+            headers["x-api-key"] = api_key
+    else:
+        url = base + "/models"
+        headers = {"User-Agent": "qq-multi-model"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+
     req = urllib.request.Request(url, headers=headers)
     kwargs = {"timeout": timeout}
     if url.startswith("https"):
@@ -157,14 +168,51 @@ def _validate_provider(provider, api_key: str, base_url: str = "", timeout: floa
         ctx = make_ssl_context()
         if ctx is not None:
             kwargs["context"] = ctx
+
     try:
         with urllib.request.urlopen(req, **kwargs) as resp:  # noqa: S310
-            return resp.status == 200, f"HTTP {resp.status}"
+            raw = resp.read()
+            status = resp.status
     except urllib.error.HTTPError as exc:
-        mapping = {401: "Key 无效（401）", 402: "账户余额不足（402）", 403: "没有权限（403）"}
-        return False, mapping.get(exc.code, f"HTTP {exc.code}")
+        mapping = {401: "Key 无效（401）", 402: "余额不足（402）", 403: "没有权限（403）",
+                   404: "接口地址不对（404）"}
+        return False, mapping.get(exc.code, f"HTTP {exc.code}"), []
     except Exception as exc:  # noqa: BLE001
-        return False, f"连接失败：{type(exc).__name__}"
+        return False, f"连接失败：{type(exc).__name__}", []
+
+    if status != 200:
+        return False, f"HTTP {status}", []
+
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+        data = payload.get("data") or payload.get("models") or []
+        models = sorted({str(item.get("id")) for item in data if isinstance(item, dict) and item.get("id")})
+    except Exception:  # noqa: BLE001
+        return True, "已连通（但模型列表解析失败，可手动填）", []
+    return True, f"HTTP {status}", models
+
+
+def _choose_model(provider, live_models: list[str]) -> str:
+    """优先让用户从「账号下真实可用」的模型里挑。"""
+    if not live_models:
+        return provider.default_model or (provider.models[0] if provider.models else "")
+
+    candidates = live_models[:20]
+    default = provider.default_model if provider.default_model in candidates else candidates[0]
+    print()
+    print("  账号下可用模型：")
+    for i, name in enumerate(candidates, 1):
+        mark = "  ← 默认" if name == default else ""
+        print(f"   {i:2d}) {name}{mark}")
+    if len(live_models) > len(candidates):
+        print(f"   …还有 {len(live_models) - len(candidates)} 个，启动后可用 /model 查看")
+
+    while True:
+        raw = ask("选序号，或直接输入模型名", default=default)
+        if raw.isdigit() and 1 <= int(raw) <= len(candidates):
+            return candidates[int(raw) - 1]
+        if raw:
+            return raw
 
 
 def _write_config(path: Path, data: dict) -> None:
@@ -362,18 +410,33 @@ def run_setup(config_path: Path, total_steps: int = 4) -> bool:
         _hint(f"{provider.label} 是本地服务，不需要 API Key；确认它已经在运行即可。")
         data["providers"].setdefault(provider.name, {})["base_url"] = provider.base_url
 
-    if provider.needs_key and ask_yes_no("  现在验证一下这个 Key 能不能用？", default=True):
-        sys.stdout.write("      验证中…")
-        sys.stdout.flush()
-        custom_base = (data["providers"].get(provider.name) or {}).get("base_url", "")
-        ok, reason = _validate_provider(provider, api_key, custom_base)
-        print("\r" + " " * 20 + "\r", end="")
-        if ok:
-            print(_c(f"      ✔ Key 可用（{reason}）", "32"))
+    custom_base = (data["providers"].get(provider.name) or {}).get("base_url", "")
+    live_models: list[str] = []
+    if provider.needs_key:
+        if ask_yes_no("  现在连一下服务商，验证 Key 并拉取可用模型？", default=True):
+            sys.stdout.write("      连接中…")
+            sys.stdout.flush()
+            ok, reason, live_models = _probe_provider(provider, api_key, custom_base)
+            print("\r" + " " * 24 + "\r", end="")
+            if ok:
+                print(_c(f"      ✔ 连通，账号下有 {len(live_models)} 个模型（{reason}）", "32"))
+            else:
+                print(_c(f"      ✘ 没连上：{reason}", "33"))
+                if not ask_yes_no("      仍然继续？", default=True):
+                    return False
+                live_models = []
+    else:
+        ok, reason, live_models = _probe_provider(provider, "", custom_base)
+        if ok and live_models:
+            print(_c(f"      检测到本地有 {len(live_models)} 个模型", "32"))
         else:
-            print(_c(f"      ✘ 验证没通过：{reason}", "33"))
-            if not ask_yes_no("      仍然继续？", default=True):
-                return False
+            print(_c(f"      没能连上 {provider.label}（{reason}），请确认它正在运行", "33"))
+
+    chosen = _choose_model(provider, live_models)
+    if not chosen:
+        print(_c("      没有可用的模型名，请在 config.yaml 里手动填 defaults.model 后重试", "31"))
+        return False
+    data["defaults"]["model"] = model_spec_for(provider.name, chosen)
 
     # 3. 后端细节
     napcat_dir: Path | None = None

@@ -2,15 +2,14 @@
 
     python tests/test_model_switch.py
 
-验证：默认模型生效 → /model 列表 → 切换后请求真的打到另一家 → reset 回默认。
+验证：默认模型生效 → /model 列出「实时查询到的」模型 → 切换后请求真的打到
+另一家 → 切回来。假服务同时实现 /chat/completions 和 /models。
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import sys
-import time
 from pathlib import Path
 
 import aiohttp
@@ -30,6 +29,9 @@ ONEBOT_PORT = 18095
 DS_PORT = 18096
 OAI_PORT = 18097
 
+DS_MODELS = ["deepseek-flash", "deepseek-v4-pro"]
+OAI_MODELS = ["gpt-5", "gpt-5-mini"]
+
 PASSED = 0
 FAILED: list[str] = []
 
@@ -44,21 +46,27 @@ def check(name: str, ok: bool, detail: str = "") -> None:
         print(f"  [FAIL] {name} {detail}")
 
 
-def make_mock(tag: str, seen: list[str]):
-    async def handler(request: web.Request) -> web.Response:
+def mock_app(tag: str, models: list[str], seen: list[str]) -> web.Application:
+    app = web.Application()
+
+    async def chat(request: web.Request) -> web.Response:
         body = await request.json()
         seen.append(body.get("model", ""))
-        return web.json_response(
-            {"choices": [{"message": {"role": "assistant", "content": f"{tag}:{body.get('model')}"}}]}
-        )
+        content = f"{tag}:{body.get('model')}"
+        return web.json_response({"choices": [{"message": {"role": "assistant", "content": content}}]})
 
-    return handler
+    async def list_models(request: web.Request) -> web.Response:
+        return web.json_response({"data": [{"id": m} for m in models]})
+
+    app.router.add_post("/v1/chat/completions", chat)
+    app.router.add_get("/v1/models", list_models)
+    return app
 
 
 CONFIG = """\
 backend: onebot
 defaults:
-  model: "deepseek/deepseek-chat"
+  model: "deepseek/deepseek-flash"
   timeout: 10
   retries: 0
 providers:
@@ -92,13 +100,11 @@ async def main() -> int:
 
     seen_ds: list[str] = []
     seen_oai: list[str] = []
-    ds_app = web.Application()
-    ds_app.router.add_post("/v1/chat/completions", make_mock("deepseek", seen_ds))
-    oai_app = web.Application()
-    oai_app.router.add_post("/v1/chat/completions", make_mock("openai", seen_oai))
-
     runners = []
-    for app, port in ((ds_app, DS_PORT), (oai_app, OAI_PORT)):
+    for app, port in (
+        (mock_app("deepseek", DS_MODELS, seen_ds), DS_PORT),
+        (mock_app("openai", OAI_MODELS, seen_oai), OAI_PORT),
+    ):
         runner = web.AppRunner(app, access_log=None)
         await runner.setup()
         await web.TCPSite(runner, "127.0.0.1", port).start()
@@ -121,20 +127,25 @@ async def main() -> int:
                     headers={"Authorization": "Bearer tok", "X-Self-ID": "10000"},
                 ) as ws:
                     reply = await ask(ws, "第一句")
-                    check("默认走 deepseek", reply.startswith("deepseek:"), reply)
-                    check("用的是配置里的模型", seen_ds and seen_ds[-1] == "deepseek-chat",
+                    check("默认走 deepseek", reply == "deepseek:deepseek-flash", reply)
+                    check("用的是配置里的模型", seen_ds and seen_ds[-1] == "deepseek-flash",
                           str(seen_ds))
 
                     listing = await ask(ws, "/model")
-                    check("/model 列出可用模型", "openai/gpt-4o-mini" in listing, listing[:120])
-                    check("/model 显示当前模型", "deepseek/deepseek-chat" in listing, listing[:120])
+                    check("/model 显示当前模型", "deepseek/deepseek-flash" in listing, listing[:160])
+                    check("/model 列出实时模型（非内置）",
+                          "deepseek/deepseek-v4-pro" in listing, listing[:160])
+                    check("列表没混进别家", "openai/" not in listing, listing[:160])
 
-                    switch = await ask(ws, "/model openai/gpt-4o-mini")
-                    check("切换有回执", "openai/gpt-4o-mini" in switch, switch)
+                    other = await ask(ws, "/model openai")
+                    check("/model openai 列出该家实时模型", "openai/gpt-5-mini" in other, other[:160])
+
+                    switch = await ask(ws, "/model openai/gpt-5-mini")
+                    check("切换有回执", "openai/gpt-5-mini" in switch, switch)
 
                     reply2 = await ask(ws, "第二句")
-                    check("切换后打到 openai", reply2.startswith("openai:"), reply2)
-                    check("openai 收到正确模型名", seen_oai and seen_oai[-1] == "gpt-4o-mini",
+                    check("切换后打到 openai", reply2 == "openai:gpt-5-mini", reply2)
+                    check("openai 收到正确模型名", seen_oai and seen_oai[-1] == "gpt-5-mini",
                           str(seen_oai))
                     check("deepseek 只被调用一次", len(seen_ds) == 1, str(seen_ds))
 
@@ -143,6 +154,9 @@ async def main() -> int:
 
                     reply3 = await ask(ws, "第三句")
                     check("reset 后回到 deepseek", reply3.startswith("deepseek:"), reply3)
+
+                    bad = await ask(ws, "/model nosuch/model")
+                    check("未知服务商有友好报错", "认不出" in bad or "不认识" in bad, bad)
     finally:
         for runner in runners:
             await runner.cleanup()

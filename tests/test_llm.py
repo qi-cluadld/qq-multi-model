@@ -96,6 +96,7 @@ class ServerTestCase(unittest.IsolatedAsyncioTestCase):
         self.api = FakeAPI()
         app = web.Application()
         app.router.add_route("POST", "/{tail:.*}", self.api.handle)
+        app.router.add_route("GET", "/{tail:.*}", self.api.handle)
         self.runner = web.AppRunner(app)
         await self.runner.setup()
         site = web.TCPSite(self.runner, "127.0.0.1", 0)
@@ -120,11 +121,13 @@ class ServerTestCase(unittest.IsolatedAsyncioTestCase):
 
 class TestProviders(unittest.TestCase):
     def test_default_model(self) -> None:
+        expected = get_provider("deepseek").default_model
+        self.assertTrue(expected, "deepseek 必须有内置默认模型")
         provider, model = resolve_model(None)
         self.assertEqual(provider.name, "deepseek")
-        self.assertEqual(model, "deepseek-chat")
-        self.assertEqual(resolve_model("")[1], "deepseek-chat")
-        self.assertEqual(resolve_model("   ")[1], "deepseek-chat")
+        self.assertEqual(model, expected)
+        self.assertEqual(resolve_model("")[1], expected)
+        self.assertEqual(resolve_model("   ")[1], expected)
 
     def test_explicit_provider_model(self) -> None:
         provider, model = resolve_model("deepseek/deepseek-chat")
@@ -146,12 +149,18 @@ class TestProviders(unittest.TestCase):
         self.assertEqual(resolve_model("DeepSeek/deepseek-chat")[0].name, "deepseek")
 
     def test_bare_model_name(self) -> None:
-        provider, model = resolve_model("gpt-4o-mini")
-        self.assertEqual((provider.name, model), ("openai", "gpt-4o-mini"))
-        provider, model = resolve_model("deepseek-reasoner")
-        self.assertEqual((provider.name, model), ("deepseek", "deepseek-reasoner"))
-        provider, model = resolve_model("qwen2.5:7b")
-        self.assertEqual((provider.name, model), ("ollama", "qwen2.5:7b"))
+        # 内置模型清单会随服务商更新，这里从当前注册表里挑一个唯一的裸模型名来解析
+        counts: dict[str, int] = {}
+        owners: dict[str, str] = {}
+        for provider in list_providers():
+            for model in provider.models:
+                counts[model] = counts.get(model, 0) + 1
+                owners[model] = provider.name
+        unique = next((model for model, count in counts.items() if count == 1), None)
+        self.assertIsNotNone(unique, "内置 provider 表里至少要有一个唯一的裸模型名")
+
+        provider, model = resolve_model(unique)
+        self.assertEqual((provider.name, model), (owners[unique], unique))
 
     def test_unknown_model(self) -> None:
         with self.assertRaises(ModelResolutionError) as ctx:
@@ -171,18 +180,30 @@ class TestProviders(unittest.TestCase):
             get_provider("")
 
     def test_ambiguous_bare_model(self) -> None:
-        fake = Provider(
-            name="fake",
-            label="Fake",
+        shared = "shared-ambiguous-model"
+        first = Provider(
+            name="fake-one",
+            label="Fake One",
             kind="openai",
             base_url="http://127.0.0.1:1/v1",
-            api_key_env="FAKE_API_KEY",
-            models=("deepseek-chat",),
-            default_model="deepseek-chat",
+            api_key_env="FAKE_ONE_API_KEY",
+            models=(shared,),
+            default_model=shared,
         )
-        with mock.patch.dict(providers.PROVIDERS, {"fake": fake}):
+        second = Provider(
+            name="fake-two",
+            label="Fake Two",
+            kind="openai",
+            base_url="http://127.0.0.1:1/v1",
+            api_key_env="FAKE_TWO_API_KEY",
+            models=(shared,),
+            default_model=shared,
+        )
+        with mock.patch.dict(
+            providers.PROVIDERS, {"fake-one": first, "fake-two": second}
+        ):
             with self.assertRaises(ModelResolutionError) as ctx:
-                resolve_model("deepseek-chat")
+                resolve_model(shared)
         self.assertIn("多个", ctx.exception.message)
 
     def test_model_spec_for(self) -> None:
@@ -197,20 +218,19 @@ class TestProviders(unittest.TestCase):
 
     def test_builtin_provider_table(self) -> None:
         names = [provider.name for provider in list_providers()]
-        self.assertEqual(
-            names,
-            [
-                "deepseek",
-                "openai",
-                "moonshot",
-                "zhipu",
-                "qwen",
-                "ollama",
-                "openrouter",
-                "siliconflow",
-                "anthropic",
-            ],
-        )
+        self.assertEqual(names[0], "deepseek")  # deepseek 是默认 provider
+        for required in (
+            "deepseek",
+            "openai",
+            "moonshot",
+            "zhipu",
+            "qwen",
+            "ollama",
+            "openrouter",
+            "siliconflow",
+            "anthropic",
+        ):
+            self.assertIn(required, names)
         self.assertFalse(get_provider("ollama").needs_key)
         self.assertEqual(get_provider("ollama").base_url, "http://127.0.0.1:11434/v1")
         self.assertEqual(get_provider("anthropic").kind, "anthropic")
@@ -218,7 +238,10 @@ class TestProviders(unittest.TestCase):
         self.assertEqual(get_provider("deepseek").api_key_env, "DEEPSEEK_API_KEY")
         for provider in list_providers():
             self.assertTrue(provider.base_url.startswith("http"), provider.name)
-            self.assertIn(provider.default_model, provider.models, provider.name)
+            # 部分 provider 的模型清单改成运行时拉取（models 为空），允许
+            if provider.models:
+                self.assertTrue(provider.default_model, provider.name)
+                self.assertIn(provider.default_model, provider.models, provider.name)
 
     def test_available_models(self) -> None:
         client = LLMClient(FakeConfig())
@@ -230,11 +253,10 @@ class TestProviders(unittest.TestCase):
         models = client.available_models()
         self.assertEqual(models, expected)
         self.assertEqual(len(models), len(set(models)))
-        self.assertIn("deepseek/deepseek-chat", models)
-        self.assertIn("anthropic/claude-sonnet-4-20250514", models)
-        self.assertIn("ollama/qwen2.5:7b", models)
-        self.assertIn("openrouter/openai/gpt-4o-mini", models)
-        self.assertEqual(client.default_model(), "deepseek/deepseek-chat")
+        # deepseek 一定有内置推荐模型，默认模型展示与 resolve_model(None) 一致
+        self.assertTrue(any(model.startswith("deepseek/") for model in models))
+        provider, model = resolve_model(None)
+        self.assertEqual(client.default_model(), model_spec_for(provider.name, model))
 
 
 # ---------------------------------------------------------------- OpenAI 兼容
@@ -355,6 +377,193 @@ class TestAnthropicKind(ServerTestCase):
         roles = [message["role"] for message in body["messages"]]
         self.assertEqual(roles, ["user", "assistant", "user"])
         self.assertTrue(all(role != "system" for role in roles))
+
+
+# ---------------------------------------------------------------- 模型列表查询
+
+class TestListModels(ServerTestCase):
+    async def test_returns_sorted_unique_ids(self) -> None:
+        self.api.reply(
+            200,
+            {
+                "data": [
+                    {"id": "model-c"},
+                    {"id": "model-a"},
+                    {"id": "model-b"},
+                    {"id": "model-a"},  # 重复项去掉
+                    {"object": "model"},  # 没有 id 的条目忽略
+                ]
+            },
+        )
+        client = self.make_client(
+            {
+                "providers": {
+                    "deepseek": {"api_key": "sk-list", "base_url": self.base_url}
+                }
+            }
+        )
+
+        models = await client.list_models("deepseek")
+        self.assertEqual(models, ["model-a", "model-b", "model-c"])
+
+        request = self.api.requests[0]
+        self.assertEqual(request["method"], "GET")
+        self.assertEqual(request["path"], "/models")
+        self.assertEqual(request["headers"].get("authorization"), "Bearer sk-list")
+
+    async def test_default_provider_from_cfg(self) -> None:
+        self.api.reply(200, {"data": [{"id": "gpt-4o-mini"}]})
+        client = self.make_client(
+            {
+                "providers": {
+                    "openai": {"api_key": "sk-openai", "base_url": self.base_url}
+                },
+                "defaults": {"model": "openai/gpt-4o-mini"},
+            }
+        )
+
+        models = await client.list_models()  # 不传 provider，用默认模型的 provider
+        self.assertEqual(models, ["gpt-4o-mini"])
+        self.assertEqual(self.api.requests[0]["path"], "/models")
+        self.assertEqual(
+            self.api.requests[0]["headers"].get("authorization"), "Bearer sk-openai"
+        )
+
+    async def test_cache_hits_within_ttl(self) -> None:
+        self.api.reply(200, {"data": [{"id": "m1"}]})
+        client = self.make_client(
+            {
+                "providers": {
+                    "deepseek": {"api_key": "sk", "base_url": self.base_url}
+                }
+            }
+        )
+
+        first = await client.list_models("deepseek")
+        second = await client.list_models("deepseek")
+        self.assertEqual(first, ["m1"])
+        self.assertEqual(second, ["m1"])
+        self.assertEqual(len(self.api.requests), 1)  # 第二次命中缓存
+
+    async def test_invalidate_models_refetches(self) -> None:
+        self.api.reply(200, {"data": [{"id": "old"}]})
+        self.api.reply(200, {"data": [{"id": "new"}]})
+        self.api.reply(200, {"data": [{"id": "again"}]})
+        client = self.make_client(
+            {
+                "providers": {
+                    "deepseek": {"api_key": "sk", "base_url": self.base_url}
+                }
+            }
+        )
+
+        self.assertEqual(await client.list_models("deepseek"), ["old"])
+        self.assertEqual(len(self.api.requests), 1)
+
+        client.invalidate_models("deepseek")
+        self.assertEqual(await client.list_models("deepseek"), ["new"])
+        self.assertEqual(len(self.api.requests), 2)
+
+        client.invalidate_models()  # 不传参数清全部
+        self.assertEqual(await client.list_models("deepseek"), ["again"])
+        self.assertEqual(len(self.api.requests), 3)
+
+    async def test_cache_is_per_provider(self) -> None:
+        self.api.reply(200, {"data": [{"id": "deepseek-chat"}]})
+        self.api.reply(200, {"data": [{"id": "gpt-4o-mini"}]})
+        client = self.make_client(
+            {
+                "providers": {
+                    "deepseek": {"api_key": "sk-d", "base_url": self.base_url},
+                    "openai": {"api_key": "sk-o", "base_url": self.base_url},
+                }
+            }
+        )
+
+        self.assertEqual(await client.list_models("deepseek"), ["deepseek-chat"])
+        self.assertEqual(await client.list_models("openai"), ["gpt-4o-mini"])
+        self.assertEqual(len(self.api.requests), 2)
+
+        # 两个 provider 各自命中缓存
+        await client.list_models("deepseek")
+        await client.list_models("openai")
+        self.assertEqual(len(self.api.requests), 2)
+
+    async def test_401_raises_llm_error_without_retry(self) -> None:
+        self.api.reply(401, {"error": {"message": "Invalid API key"}})
+        client = self.make_client(
+            {
+                "providers": {
+                    "deepseek": {"api_key": "sk-bad", "base_url": self.base_url}
+                }
+            },
+            retries=2,
+        )
+
+        with self.assertRaises(LLMError) as ctx:
+            await client.list_models("deepseek")
+        message = ctx.exception.message
+        self.assertIn("401", message)       # 带状态码
+        self.assertIn("DeepSeek", message)  # 带展示名
+        self.assertIn("API Key", message)
+        self.assertEqual(len(self.api.requests), 1)  # 查询失败不重试
+
+    async def test_missing_api_key(self) -> None:
+        client = self.make_client({})
+        with mock.patch.dict(os.environ, {"DEEPSEEK_API_KEY": ""}):
+            with self.assertRaises(LLMError) as ctx:
+                await client.list_models("deepseek")
+        message = ctx.exception.message
+        self.assertIn("DeepSeek", message)
+        self.assertIn("--setup", message)
+        self.assertEqual(self.api.requests, [])
+
+    async def test_anthropic_uses_v1_models(self) -> None:
+        self.api.reply(
+            200,
+            {
+                "data": [
+                    {"id": "claude-sonnet-4-20250514", "type": "model"},
+                    {"id": "claude-3-5-haiku-20241022", "type": "model"},
+                ]
+            },
+        )
+        client = self.make_client(
+            {
+                "providers": {
+                    "anthropic": {"api_key": "sk-ant", "base_url": self.base_url}
+                }
+            }
+        )
+
+        models = await client.list_models("anthropic")
+        self.assertEqual(
+            models,
+            ["claude-3-5-haiku-20241022", "claude-sonnet-4-20250514"],
+        )
+        request = self.api.requests[0]
+        self.assertEqual(request["method"], "GET")
+        self.assertEqual(request["path"], "/v1/models")
+        self.assertEqual(request["headers"].get("x-api-key"), "sk-ant")
+        self.assertEqual(request["headers"].get("anthropic-version"), "2023-06-01")
+
+    async def test_unknown_provider(self) -> None:
+        client = self.make_client({})
+        with self.assertRaises(LLMError):
+            await client.list_models("nope")
+
+    async def test_malformed_response(self) -> None:
+        self.api.reply(200, {"unexpected": []})
+        client = self.make_client(
+            {
+                "providers": {
+                    "deepseek": {"api_key": "sk", "base_url": self.base_url}
+                }
+            }
+        )
+        with self.assertRaises(LLMError) as ctx:
+            await client.list_models("deepseek")
+        self.assertIn("格式", ctx.exception.message)
 
 
 # ---------------------------------------------------------------- 错误处理

@@ -1,4 +1,4 @@
-﻿"""DeepSeek QQ 机器人 —— 程序入口。
+"""DeepSeek QQ 机器人 —— 程序入口。
 
 用法：
     qq-multi-model.exe                 # 用 exe 同目录的 config.yaml 启动

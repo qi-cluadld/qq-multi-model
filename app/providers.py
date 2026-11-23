@@ -47,8 +47,9 @@ PROVIDERS: dict[str, Provider] = {
         # OpenAI 兼容：https://api.deepseek.com/chat/completions 也可用
         base_url="https://api.deepseek.com",
         api_key_env="DEEPSEEK_API_KEY",
-        models=("deepseek-chat", "deepseek-reasoner"),
-        default_model="deepseek-chat",
+        # 2026-11 起实际在售的是这两个（旧版 deepseek-chat / deepseek-reasoner 已下线）
+        models=("deepseek-flash", "deepseek-v4-pro"),
+        default_model="deepseek-flash",
     ),
     "openai": Provider(
         name="openai",
@@ -56,8 +57,9 @@ PROVIDERS: dict[str, Provider] = {
         kind="openai",
         base_url="https://api.openai.com/v1",
         api_key_env="OPENAI_API_KEY",
-        models=("gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "o4-mini"),
-        default_model="gpt-4o-mini",
+        # 模型迭代太快，这里不写死：运行时用 GET /models 拉你账号可用的列表
+        models=(),
+        default_model="",
     ),
     "moonshot": Provider(
         name="moonshot",
@@ -65,13 +67,8 @@ PROVIDERS: dict[str, Provider] = {
         kind="openai",
         base_url="https://api.moonshot.cn/v1",
         api_key_env="MOONSHOT_API_KEY",
-        models=(
-            "moonshot-v1-8k",
-            "moonshot-v1-32k",
-            "moonshot-v1-128k",
-            "kimi-latest",
-        ),
-        default_model="moonshot-v1-8k",
+        models=("kimi-k3.1-pro", "kimi-k3.1-pro-highspeed", "kimi-k3"),
+        default_model="kimi-k3.1-pro",
     ),
     "zhipu": Provider(
         name="zhipu",
@@ -79,8 +76,8 @@ PROVIDERS: dict[str, Provider] = {
         kind="openai",
         base_url="https://open.bigmodel.cn/api/paas/v4",
         api_key_env="ZHIPU_API_KEY",
-        models=("glm-4-flash", "glm-4-plus", "glm-4-air", "glm-4.5"),
-        default_model="glm-4-flash",
+        models=("glm-5.3", "glm-5.2", "glm-5.3-flash"),
+        default_model="glm-5.3",
     ),
     "qwen": Provider(
         name="qwen",
@@ -88,8 +85,8 @@ PROVIDERS: dict[str, Provider] = {
         kind="openai",
         base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
         api_key_env="DASHSCOPE_API_KEY",
-        models=("qwen-plus", "qwen-turbo", "qwen-max", "qwen-long"),
-        default_model="qwen-plus",
+        models=("qwen4-max", "qwen3.7-plus", "qwen3.8-flash"),
+        default_model="qwen3.7-plus",
     ),
     "ollama": Provider(
         name="ollama",
@@ -97,9 +94,9 @@ PROVIDERS: dict[str, Provider] = {
         kind="openai",
         base_url="http://127.0.0.1:11434/v1",
         api_key_env="OLLAMA_API_KEY",
-        # 本地模型取决于你 `ollama pull` 过哪些，这里只是常见推荐，可自填任意名字
-        models=("qwen2.5:7b", "llama3.1:8b", "qwen2.5:14b", "mistral:7b"),
-        default_model="qwen2.5:7b",
+        # 取决于你 `ollama pull` 过哪些；运行时用 GET /v1/models 列出本地已有的
+        models=(),
+        default_model="",
         needs_key=False,
     ),
     "openrouter": Provider(
@@ -110,13 +107,9 @@ PROVIDERS: dict[str, Provider] = {
         api_key_env="OPENROUTER_API_KEY",
         # OpenRouter 的模型 id 自带 "厂商/模型" 前缀，写成 provider/model 后
         # 仍然只按第一个 / 切分，所以 "openrouter/openai/gpt-4o-mini" 是合法的。
-        models=(
-            "openai/gpt-4o-mini",
-            "anthropic/claude-3.5-sonnet",
-            "google/gemini-2.0-flash-001",
-            "deepseek/deepseek-chat",
-        ),
-        default_model="openai/gpt-4o-mini",
+        # 模型池随上游变化，运行时拉取
+        models=(),
+        default_model="",
     ),
     "siliconflow": Provider(
         name="siliconflow",
@@ -124,12 +117,8 @@ PROVIDERS: dict[str, Provider] = {
         kind="openai",
         base_url="https://api.siliconflow.cn/v1",
         api_key_env="SILICONFLOW_API_KEY",
-        models=(
-            "deepseek-ai/DeepSeek-V3",
-            "deepseek-ai/DeepSeek-R1",
-            "Qwen/Qwen2.5-72B-Instruct",
-        ),
-        default_model="deepseek-ai/DeepSeek-V3",
+        models=(),
+        default_model="",
     ),
     "anthropic": Provider(
         name="anthropic",
@@ -137,12 +126,9 @@ PROVIDERS: dict[str, Provider] = {
         kind="anthropic",
         base_url="https://api.anthropic.com",
         api_key_env="ANTHROPIC_API_KEY",
-        models=(
-            "claude-sonnet-4-20250514",
-            "claude-opus-4-20250514",
-            "claude-3-5-haiku-20241022",
-        ),
-        default_model="claude-sonnet-4-20250514",
+        # 运行时用 GET /v1/models 拉取
+        models=(),
+        default_model="",
     ),
 }
 

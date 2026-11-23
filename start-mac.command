@@ -1,4 +1,4 @@
-﻿#!/bin/bash
+#!/bin/bash
 # 双击这个文件即可启动 DeepSeek QQ 机器人（macOS）
 # 第一次运行如果提示“无法打开”，先看 README 里的“首次运行”说明
 

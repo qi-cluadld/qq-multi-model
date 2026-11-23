@@ -1,4 +1,4 @@
-﻿# 一键打包成单文件 exe：dist\qq-multi-model.exe
+# 一键打包成单文件 exe：dist\qq-multi-model.exe
 # 用法（PowerShell）：  .\build.ps1
 $ErrorActionPreference = "Stop"
 Set-Location -Path $PSScriptRoot

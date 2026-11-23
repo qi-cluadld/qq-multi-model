@@ -9,17 +9,19 @@
 
 内置了这些服务商的默认地址和模型，填个 Key 就能用：
 
-| 服务商 | 配置名 | 默认模型 | 环境变量 |
+| 服务商 | 配置名 | 兜底默认模型 | 环境变量 |
 | --- | --- | --- | --- |
-| DeepSeek | `deepseek` | `deepseek-chat` | `DEEPSEEK_API_KEY` |
-| OpenAI | `openai` | `gpt-4o-mini` | `OPENAI_API_KEY` |
-| Kimi / 月之暗面 | `moonshot` | `moonshot-v1-8k` | `MOONSHOT_API_KEY` |
-| 智谱 GLM | `zhipu` | `glm-4-flash` | `ZHIPU_API_KEY` |
-| 通义千问 | `qwen` | `qwen-plus` | `DASHSCOPE_API_KEY` |
-| OpenRouter | `openrouter` | 见其模型列表 | `OPENROUTER_API_KEY` |
-| 硅基流动 | `siliconflow` | 见其模型列表 | `SILICONFLOW_API_KEY` |
-| Anthropic | `anthropic` | `claude-3-5-sonnet-latest` | `ANTHROPIC_API_KEY` |
-| 本地 Ollama | `ollama` | 需自己指定 | 不需要 Key |
+| DeepSeek | `deepseek` | `deepseek-flash` | `DEEPSEEK_API_KEY` |
+| OpenAI | `openai` | 运行时查询 | `OPENAI_API_KEY` |
+| Kimi | `moonshot` | `kimi-k3.1-pro` | `MOONSHOT_API_KEY` |
+| 智谱 GLM | `zhipu` | `glm-5.3` | `ZHIPU_API_KEY` |
+| 通义千问 | `qwen` | `qwen3.7-plus` | `DASHSCOPE_API_KEY` |
+| OpenRouter | `openrouter` | 运行时查询 | `OPENROUTER_API_KEY` |
+| 硅基流动 | `siliconflow` | 运行时查询 | `SILICONFLOW_API_KEY` |
+| Anthropic | `anthropic` | 运行时查询 | `ANTHROPIC_API_KEY` |
+| 本地 Ollama | `ollama` | 本机已 pull 的 | 不需要 Key |
+
+> **模型名单不是写死的。** 填完 Key 后，程序会直接问服务商的 `/models` 接口要你账号下真实可用的模型，向导里列出来让你选；聊天里 `/model` 也是实时查询（缓存 10 分钟）。上面那些名字只是连不上服务时的兜底。
 
 **任何其它 OpenAI 兼容服务**（自建 vLLM、One-API、中转站、Groq、Together……）都能接：在 `providers` 里用 `custom_` 前缀加一段 `base_url` + `api_key` 即可，不用改代码。
 
@@ -59,9 +61,10 @@ Token:     向导里生成的那个（也在 config.yaml 的 onebot.access_token
 
 | 命令 | 作用 |
 | --- | --- |
-| `/model` | 看当前模型 + 可用模型列表 |
-| `/model openai/gpt-4o-mini` | 切到 OpenAI 的 gpt-4o-mini |
-| `/model ollama/qwen2.5:7b` | 切到本地 Ollama 的模型 |
+| `/model` | 看当前模型 + 该服务商账号下的真实模型列表 |
+| `/model openai` | 看 OpenAI 账号下有哪些模型 |
+| `/model openai/<模型名>` | 切到别家（名字按 `/model` 列出的填） |
+| `/model ollama/<模型名>` | 切到本地 Ollama |
 | `/model reset` | 回到配置文件里的默认模型 |
 | `/reset` | 清空上下文（不影响模型选择） |
 

@@ -121,7 +121,9 @@ def test_key_validation_mock() -> None:
             self.send_response(200 if Handler.ok else 401)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(json.dumps({"data": []}).encode())
+            self.wfile.write(json.dumps({"data": [
+                {"id": "deepseek-v4-pro"}, {"id": "deepseek-flash"}
+            ]}).encode())
 
         def log_message(self, *args):  # noqa: A002
             pass
@@ -130,12 +132,15 @@ def test_key_validation_mock() -> None:
     port = server.server_address[1]
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
+        provider = wizard.get_provider("deepseek")
         Handler.ok = True
-        ok, reason = wizard._validate_provider(wizard.get_provider("deepseek"), "sk-ok", f"http://127.0.0.1:{port}")
+        ok, reason, models = wizard._probe_provider(provider, "sk-ok", f"http://127.0.0.1:{port}")
         check("200 → 通过", ok is True, reason)
+        check("解析出真实模型列表", models == ["deepseek-flash", "deepseek-v4-pro"], str(models))
         Handler.ok = False
-        ok, reason = wizard._validate_provider(wizard.get_provider("deepseek"), "sk-bad", f"http://127.0.0.1:{port}")
+        ok, reason, models = wizard._probe_provider(provider, "sk-bad", f"http://127.0.0.1:{port}")
         check("401 → 不通过且提示清楚", ok is False and "401" in reason, reason)
+        check("失败时模型列表为空", models == [], str(models))
     finally:
         server.shutdown()
 

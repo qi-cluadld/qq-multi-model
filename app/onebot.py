@@ -1,4 +1,4 @@
-﻿"""OneBot v11 反向 WebSocket 适配器（NapCat / Lagrange / LLOneBot 通用）。"""
+"""OneBot v11 反向 WebSocket 适配器（NapCat / Lagrange / LLOneBot 通用）。"""
 
 from __future__ import annotations
 

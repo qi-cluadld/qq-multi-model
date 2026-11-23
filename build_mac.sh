@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 # 在 macOS 上本地打包：dist/qq-multi-model-macos-<arch>.zip
 # 用法：bash build_mac.sh
 set -euo pipefail

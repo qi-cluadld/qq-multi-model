@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass, field
 
 from .llm import LLMClient, LLMError
-from .providers import ProviderError, model_spec_for, resolve_model
+from .providers import PROVIDERS, ProviderError, get_provider, model_spec_for, resolve_model
 
 log = logging.getLogger("bot.chat")
 
@@ -65,7 +65,7 @@ class ChatService:
             self._sessions.pop(key, None)
             return "上下文已清空，我们重新开始聊吧。"
         if command in ("/model", "/models"):
-            return self._handle_model(key, text)
+            return await self._handle_model(key, text)
 
         now = time.time()
         last = self._last_request.get(key, 0.0)
@@ -106,26 +106,27 @@ class ChatService:
 
     # ------------------------------------------------------------ 内部
 
-    def _handle_model(self, key: str, text: str) -> str:
+    async def _handle_model(self, key: str, text: str) -> str:
         session = self._get_session(key)
         parts = text.split()
         current = session.model or self.client.default_model()
 
         if len(parts) == 1:
-            models = self.client.available_models()
-            lines = [f"当前模型：{current}", ""]
-            lines.append("可用模型（发 /model 名字 切换，例如 /model openai/gpt-4o-mini）：")
-            shown = models[:40]
-            lines.extend(f"  {m}" for m in shown)
-            if len(models) > len(shown):
-                lines.append(f"  …还有 {len(models) - len(shown)} 个")
-            lines.append("/model reset —— 回到默认模型")
-            return "\n".join(lines)
+            provider_name = None
+            try:
+                provider_name = resolve_model(current)[0].name
+            except ProviderError:
+                pass
+            return await self._describe_models(current, provider_name)
 
         arg = parts[1]
         if arg.lower() in ("reset", "default", "默认"):
             session.model = None
             return f"已切回默认模型：{self.client.default_model()}"
+
+        # "/model openai" —— 只看这家有哪些模型
+        if "/" not in arg and arg.lower() in PROVIDERS:
+            return await self._describe_models(current, arg.lower())
 
         try:
             provider, model = resolve_model(arg)
@@ -134,6 +135,30 @@ class ChatService:
         session.model = model_spec_for(provider.name, model)
         log.info("会话 [%s] 切换到 %s", key, session.model)
         return f"已切换到 {session.model}（上下文保留；用 /reset 可清空）"
+
+    async def _describe_models(self, current: str, provider_name: str | None) -> str:
+        """列出某家账号下真实可用的模型（实时查询，失败回退内置清单）。"""
+        if not provider_name:
+            return f"当前模型：{current}\n发 /model <provider> 可以看某家的模型"
+
+        provider = get_provider(provider_name)
+        lines = [f"当前模型：{current}", ""]
+        try:
+            models = await self.client.list_models(provider_name)
+            lines.append(f"{provider.label} 账号下的模型（实时）：")
+        except LLMError as exc:
+            models = list(provider.models)
+            lines.append(f"{provider.label} 实时查询失败（{exc.message}），下面是内置兜底：")
+
+        if not models:
+            lines.append("  （没查到可用模型；可直接用 provider/模型名 指定）")
+        for name in models[:20]:
+            lines.append(f"  {model_spec_for(provider.name, name)}")
+        if len(models) > 20:
+            lines.append(f"  …还有 {len(models) - 20} 个")
+        lines.append("")
+        lines.append("/model <名字> 切换，/model reset 回默认")
+        return "\n".join(lines)
 
     def _get_session(self, key: str) -> Session:
         session = self._sessions.get(key)

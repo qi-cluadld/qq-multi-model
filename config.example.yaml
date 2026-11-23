@@ -14,7 +14,7 @@ backend: onebot
 # ---------------------------- 默认模型参数 ----------------------------
 defaults:
   # 格式是「服务商/模型」，聊天里可以用 /model 随时切换
-  model: "deepseek/deepseek-chat"
+  model: "deepseek/deepseek-flash"   # 运行时可用 /model 切换；向导会列出你账号下的真实模型
 
   temperature: 1.0
   max_tokens: 2048

@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.spec
+
+# 虚拟环境
+.venv/
+venv/
+
+# 构建产物（exe 通过 Release 分发，不入库）
+build/
+dist/
+build_*/
+dist_*/
+
+# 运行时文件
+logs/
+_rt/
+*.log
+
+# 测试临时目录
+tests/tmp/
+tests/firstrun/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# 宣传片产物（生成脚本入库，成品文件不入库）
+promo/*.mp4
+promo/*.wav
+promo/*.png
+promo/_frames/

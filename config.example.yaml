@@ -1,0 +1,102 @@
+# ============================================================
+#  qq-multi-model · 多模型 QQ 机器人 配置文件（示例）
+#
+#  一般不用手改：首次运行会进配置向导，问几个问题就写好 config.yaml。
+#  想重新配置：  qq-multi-model --setup
+# ============================================================
+
+# 用哪种方式接 QQ：
+#   onebot     —— NapCat / Lagrange（普通 QQ 号，推荐）
+#   qqofficial —— QQ 开放平台的官方机器人（appid + secret）
+backend: onebot
+
+
+# ---------------------------- 默认模型参数 ----------------------------
+defaults:
+  # 格式是「服务商/模型」，聊天里可以用 /model 随时切换
+  model: "deepseek/deepseek-chat"
+
+  temperature: 1.0
+  max_tokens: 2048
+  timeout: 60          # 单次请求超时（秒）
+  retries: 2           # 遇到 429/5xx 自动重试次数
+
+  system_prompt: |
+    你是一个通过 QQ 聊天的 AI 助手。回答要简洁、口语化，
+    适合在手机屏幕上阅读：多用短句和分点，避免长篇大论，
+    不要输出 Markdown 表格和复杂格式。
+
+
+# ---------------------------- 各家模型的密钥 ----------------------------
+# 只需要填你要用的那家。没填的会去读环境变量（见每个服务商后面的注释）。
+providers:
+  deepseek:
+    api_key: ""        # 或环境变量 DEEPSEEK_API_KEY
+
+  openai:
+    api_key: ""        # 或 OPENAI_API_KEY
+
+  moonshot:            # Kimi
+    api_key: ""        # 或 MOONSHOT_API_KEY
+
+  zhipu:               # 智谱 GLM
+    api_key: ""        # 或 ZHIPU_API_KEY
+
+  qwen:                # 通义千问（DashScope 的 OpenAI 兼容模式）
+    api_key: ""        # 或 DASHSCOPE_API_KEY
+
+  openrouter:
+    api_key: ""        # 或 OPENROUTER_API_KEY
+
+  siliconflow:
+    api_key: ""        # 或 SILICONFLOW_API_KEY
+
+  anthropic:
+    api_key: ""        # 或 ANTHROPIC_API_KEY
+
+  # 本地 Ollama：不需要 key，把 base_url 指向你的 Ollama 就行
+  ollama:
+    base_url: "http://127.0.0.1:11434/v1"
+    api_key: ""
+
+  # 任何其它 OpenAI 兼容服务，用 custom_ 前缀自己起个名字，
+  # 然后在 defaults.model 里写 custom_名字/模型名：
+  # custom_myapi:
+  #   base_url: "https://example.com/v1"
+  #   api_key: ""
+
+
+# ---------------------------- 对话行为 ----------------------------
+chat:
+  history_turns: 10             # 每个会话记多少轮
+  session_ttl_minutes: 30       # 多久没聊清空上下文
+  max_sessions: 500
+  cooldown_seconds: 1.5
+  max_concurrent: 4
+  max_reply_chars: 1500
+  busy_reply: "当前排队的人有点多，请稍等几秒再问~"
+  cooldown_reply: "问得太快啦，缓一缓再发~"
+  error_reply: "我这会儿有点故障（{reason}），稍后再试吧。"
+
+
+# ---------------------------- OneBot（NapCat） ----------------------------
+onebot:
+  host: "0.0.0.0"
+  port: 6700
+  path: "/onebot"
+  access_token: ""
+  group_need_at: true
+  group_prefix: "#"
+  private_enabled: true
+
+
+# ---------------------------- QQ 官方机器人 ----------------------------
+qqofficial:
+  app_id: ""
+  client_secret: ""
+  sandbox: false
+  intents: 1107296256
+  ws_url: ""
+  api_base: "https://api.sgroup.qq.com"
+  token_url: "https://bots.qq.com/app/getAppAccessToken"
+  max_reply_chars: 1800

@@ -7,6 +7,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 
+from . import ui
 from .llm import LLMClient, LLMError
 from .providers import PROVIDERS, ProviderError, get_provider, model_spec_for, resolve_model
 
@@ -90,12 +91,14 @@ class ChatService:
             try:
                 reply = await self.client.chat(payload, model=session.model)
             except LLMError as exc:
+                ui.STATS.errors += 1
                 session.messages.pop()  # 失败的这轮别留在上下文里
                 log.warning("模型调用失败 [%s]：%s", key, exc.message)
                 return self.error_reply.format(reason=exc.message)
 
             elapsed = time.perf_counter() - started
             session.messages.append({"role": "assistant", "content": reply})
+            ui.STATS.replies += 1
             self._trim(session)
             session.touch()
             self._evict_if_needed()

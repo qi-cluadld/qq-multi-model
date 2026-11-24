@@ -1,4 +1,4 @@
-"""DeepSeek QQ 机器人 —— 程序入口。
+"""多模型 QQ 机器人 —— 程序入口。
 
 用法：
     qq-multi-model.exe                 # 用 exe 同目录的 config.yaml 启动
@@ -12,24 +12,16 @@ import argparse
 import asyncio
 import platform
 import sys
+import time
 from pathlib import Path
 
 import yaml
 
-from app import __version__
+from app import __version__, ui
 from app.chat import ChatService
 from app.config import app_dir, load_config
 from app.llm import LLMClient
 from app.log import setup_logging
-
-BANNER = r"""
-  ____                 _     ____   ___  ____
- |  _ \  ___  ___  ___| | __/ ___| / _ \/ ___|
- | | | |/ _ \/ _ \/ __| |/ /\___ \| | | \___ \
- | |_| |  __/  __/\__ \   <  ___) | |_| |___) |
- |____/ \___|\___||___/_|\_\|____/ \__\_\____/
-"""
-
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -70,28 +62,30 @@ async def _run(cfg, logger) -> None:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     cfg_path = Path(args.config).expanduser().resolve() if args.config else app_dir() / "config.yaml"
+    ui.set_title("qq-multi-model · 多模型 QQ 机器人")
 
     if args.check:
         if not cfg_path.exists():
-            print(f"[配置] 还没有配置文件：{cfg_path}")
-            print("       先不带 --check 运行一次，会进入配置向导。")
+            print(ui.warn(f"还没有配置文件：{cfg_path}"))
+            print(ui.dim("       先不带 --check 运行一次，会进入配置向导。"))
             return 1
         cfg = load_config(args.config)
         print(f"配置文件：{cfg.path}")
         print(yaml.safe_dump(cfg.masked(), allow_unicode=True, sort_keys=False))
-        print("配置加载完成。")
+        print(ui.ok("配置加载完成。"))
         return 0
 
-    print(BANNER)
+    print()
+    print(f"  {ui.bold(ui.accent('qq-multi-model'))}  {ui.dim('v' + __version__)}")
 
     # 没有配置文件（或显式 --setup）就进向导，而不是让用户自己去改 YAML
     if args.setup or not cfg_path.exists():
         from app import wizard
 
         if not wizard.is_interactive():
-            print("[配置] 找不到 config.yaml，而且当前不是交互式终端，没法进入配置向导。")
-            print("       请直接双击程序（会弹出窗口），或在终端里运行；")
-            print("       也可以把 config.example.yaml 复制成 config.yaml 手动填写。")
+            print(ui.warn("找不到 config.yaml，而且当前不是交互式终端，没法进入配置向导。"))
+            print(ui.dim("       请直接双击程序（会弹出窗口），或在终端里运行；"))
+            print(ui.dim("       也可以把 config.example.yaml 复制成 config.yaml 手动填写。"))
             return 1
 
         if not wizard.run_setup(cfg_path):
@@ -101,21 +95,32 @@ def main(argv: list[str] | None = None) -> int:
 
     cfg = load_config(args.config)
     logger = setup_logging(app_dir() / "logs", args.log_level)
+    ui.STATS.reset()
 
-    print(f"  {__version__}  |  Python {platform.python_version()}  "
-          f"{platform.system()}  |  配置：{cfg.path}")
-    print(f"  后端：{cfg.get('backend')}  默认模型：{cfg.get('defaults.model')}")
-    print("  按 Ctrl+C 退出\n")
+    print()
+    print(ui.banner(
+        __version__,
+        str(cfg.get("defaults.model", "")),
+        str(cfg.get("backend", "onebot")),
+        str(cfg.path),
+        str(app_dir() / "logs" / "bot.log"),
+    ))
+    print()
 
+    exit_code = 0
     try:
         asyncio.run(_run(cfg, logger))
     except KeyboardInterrupt:
-        print("\n已退出。")
+        pass
     except SystemExit as exc:
         if exc.code:
-            print(f"\n[错误] {exc}")
-            return 1
-    return 0
+            print()
+            print(ui.err(f"启动失败：{exc}"))
+            exit_code = 1
+    finally:
+        print()
+        print(ui.summary(time.time() - ui.STATS.started))
+    return exit_code
 
 
 if __name__ == "__main__":

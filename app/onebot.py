@@ -11,6 +11,7 @@ from typing import Any
 
 from aiohttp import WSMsgType, web
 
+from . import ui
 from .chat import ChatService, split_text
 
 log = logging.getLogger("bot.onebot")
@@ -179,6 +180,7 @@ class OneBotServer:
                 await self._send_text(ws, msg_type, group_id, user_id, "在呢，想聊点什么？")
             return
 
+        ui.STATS.messages += 1
         log.info("收到[%s] %s(%s): %s", msg_type, nick or user_id, user_id, text[:80])
 
         key = f"group:{group_id}:{user_id}" if msg_type == "group" else f"private:{user_id}"

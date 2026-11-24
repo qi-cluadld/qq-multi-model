@@ -1,3 +1,3 @@
-"""DeepSeek QQ Bot 核心包。"""
+"""多模型 QQ 机器人核心包。"""
 
-__version__ = "2.0.0"
+__version__ = "2.2.0"
